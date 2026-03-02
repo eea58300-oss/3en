@@ -643,38 +643,23 @@ body::after {
   <div class="hero-right">
     <div class="dashboard-card">
       <div class="dash-header">
-        <div class="status-dot" id="dash-status">غير متاح في الوقت الحالي</div>
+        <span style="font-size:.9rem;font-weight:700;color:var(--white-70)">السيرفر الآن</span>
+        <div id="live-dot" style="display:flex;align-items:center;gap:6px;font-size:.78rem;font-weight:600;color:var(--white-40)">جاري التحميل...</div>
       </div>
 
-      <div class="stat-grid">
-        <div class="stat-box" style="grid-column: span 2;">
-          <span class="stat-num" id="total-members" style="font-size:2.2rem">—</span>
-          <span class="stat-lbl">عدد الأعضاء</span>
-        </div>
+      <div style="position:relative;overflow:hidden;display:flex;flex-direction:column;align-items:center;padding:36px 20px;border-radius:16px;background:var(--white-5);border:1px solid rgba(41,185,100,.1);text-align:center;margin-bottom:16px">
+        <div style="position:absolute;inset:0;background:radial-gradient(ellipse at 50% 0%,rgba(41,185,100,.12),transparent 65%);pointer-events:none"></div>
+        <span id="online-num" style="position:relative;font-size:4.2rem;font-weight:900;color:var(--green);line-height:1;display:block;margin-bottom:12px;filter:drop-shadow(0 0 28px rgba(41,185,100,.6));transition:all .5s cubic-bezier(.16,1,.3,1)">—</span>
+        <span style="position:relative;font-size:.9rem;color:var(--white-70);font-weight:600">🟢 متصل الآن</span>
+        <span style="position:relative;font-size:.72rem;color:var(--white-40);margin-top:5px">عدد الأعضاء الأونلاين في هذه اللحظة</span>
       </div>
 
-      <div class="stat-grid" style="margin-top:12px">
-        <div class="stat-box">
-          <span class="stat-num" id="online-members" style="font-size:1.6rem; color:var(--green)">—</span>
-          <span class="stat-lbl">🟢 متصل الآن</span>
+      <div style="display:flex;align-items:center;gap:10px;font-size:.72rem;color:var(--white-40)">
+        <div style="flex:1;height:3px;border-radius:3px;background:var(--white-10);overflow:hidden">
+          <div id="rbar" style="height:100%;border-radius:3px;background:linear-gradient(90deg,var(--green),var(--green-soft));box-shadow:0 0 8px rgba(41,185,100,.4);width:100%;transition:width .25s linear"></div>
         </div>
-        <div class="stat-box">
-          <span class="stat-num" id="offline-members" style="font-size:1.6rem; color:var(--white-40)">—</span>
-          <span class="stat-lbl">⚫ غير متصل</span>
-        </div>
+        <span id="rtxt">يتجدد كل 15 ث</span>
       </div>
-
-      <div class="mini-bar-wrap" style="margin-top:18px">
-        <div class="mini-bar-label">
-          <span>نسبة المتصلين</span>
-          <span style="color:var(--green)" id="online-pct">—%</span>
-        </div>
-        <div class="mini-bar">
-          <div class="mini-bar-fill" id="online-bar" style="width:0%; transition: width 1s cubic-bezier(0.16,1,0.3,1);"></div>
-        </div>
-      </div>
-
-
     </div>
   </div>
 </div>
@@ -837,53 +822,64 @@ body::after {
 </footer>
 
 <script>
-// ── DISCORD WIDGET ──
-const SERVER_ID = '1442684142948057169';
-const WIDGET_URL = `https://discord.com/api/guilds/${SERVER_ID}/widget.json`;
+// ── DISCORD LIVE ONLINE COUNT — refreshes every 15s ──
+const WIDGET_URL = 'https://discord.com/api/guilds/1442684142948057169/widget.json';
+const REFRESH_MS = 15000;
+const $num  = document.getElementById('online-num');
+const $dot  = document.getElementById('live-dot');
+const $rbar = document.getElementById('rbar');
+const $rtxt = document.getElementById('rtxt');
+let lastOnline = null;
+let cdTimer = null;
 
-async function fetchDiscordStats() {
-  try {
-    const res = await fetch(WIDGET_URL);
-    if (!res.ok) throw new Error('Widget not enabled');
-    const data = await res.json();
-
-    const online = data.presence_count ?? (data.members?.length ?? 0);
-    // Widget API gives presence_count (online) but not total members directly
-    // members array in widget only shows online users (max 100)
-    const totalEl   = document.getElementById('total-members');
-    const onlineEl  = document.getElementById('online-members');
-    const offlineEl = document.getElementById('offline-members');
-    const pctEl     = document.getElementById('online-pct');
-    const barEl     = document.getElementById('online-bar');
-    const statusEl  = document.getElementById('dash-status');
-
-    // Discord widget only reliably gives presence_count (online now)
-    onlineEl.textContent  = online.toLocaleString('ar');
-    totalEl.textContent   = online.toLocaleString('ar') + '+';
-    offlineEl.textContent = '—';
-
-    // Since widget doesn't expose total, show online as the main metric
-    totalEl.closest('.stat-box').querySelector('.stat-lbl').textContent = 'متصل الآن بالسيرفر';
-    totalEl.style.color = 'var(--green-soft)';
-    offlineEl.closest('.stat-box').style.display = 'none';
-
-    // Simplify to just one big stat
-    pctEl.textContent = online + ' عضو';
-    barEl.style.width = '100%';
-
-    statusEl.textContent = 'نشط الآن';
-    statusEl.style.color = 'var(--green)';
-
-  } catch (err) {
-    document.getElementById('widget-error').style.display = 'block';
-    document.getElementById('dash-status').textContent = 'غير متاح';
-    document.getElementById('dash-status').style.color = 'rgba(255,120,120,0.8)';
-    console.warn('Discord widget error:', err.message);
-  }
+function animateCount(el, target) {
+  const from = parseInt(el.textContent.replace(/[^\d]/g, '')) || 0;
+  if (from === target) return;
+  const dur = 900, t0 = performance.now();
+  const ease = t => 1 - Math.pow(1 - t, 3);
+  const tick = now => {
+    const p = Math.min((now - t0) / dur, 1);
+    el.textContent = Math.round(from + (target - from) * ease(p)).toLocaleString('ar-SA');
+    if (p < 1) requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
 }
 
-fetchDiscordStats();
-setInterval(fetchDiscordStats, 60000); // refresh every minute
+function startCountdown() {
+  if (cdTimer) clearInterval(cdTimer);
+  $rbar.style.width = '100%';
+  const t0 = performance.now();
+  cdTimer = setInterval(() => {
+    const remaining = Math.max(0, 1 - (performance.now() - t0) / REFRESH_MS);
+    $rbar.style.width = (remaining * 100) + '%';
+    const secs = Math.ceil(remaining * (REFRESH_MS / 1000));
+    $rtxt.textContent = secs > 0 ? `يتجدد خلال ${secs} ث` : 'جاري التجديد...';
+    if (remaining <= 0) clearInterval(cdTimer);
+  }, 250);
+}
+
+async function fetchOnline() {
+  try {
+    const res = await fetch(WIDGET_URL, { cache: 'no-store' });
+    if (!res.ok) throw new Error('not ok');
+    const data = await res.json();
+    const online = data.presence_count ?? data.members?.length ?? null;
+    if (online !== null) {
+      animateCount($num, online);
+      $dot.innerHTML = '<span style="width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 12px var(--green);display:inline-block;animation:pulse 1.5s ease-in-out infinite;flex-shrink:0"></span> نشط الآن';
+      $dot.style.color = 'var(--green)';
+      lastOnline = online;
+    } else if (lastOnline !== null) {
+      $num.textContent = lastOnline.toLocaleString('ar-SA');
+    }
+  } catch (_) {
+    if (lastOnline !== null) $num.textContent = lastOnline.toLocaleString('ar-SA');
+  }
+  startCountdown();
+}
+
+fetchOnline();
+setInterval(fetchOnline, REFRESH_MS);
 
 // ── PARTICLES ──
 const canvas = document.getElementById('canvas');
